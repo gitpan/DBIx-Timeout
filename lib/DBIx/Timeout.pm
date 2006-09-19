@@ -5,10 +5,11 @@ require 5.008;    # v5.8.0+ needed for safe signals
 use warnings;
 use strict;
 
-our $VERSION = '1.00';
+our $VERSION = '1.01';
 
 use Params::Validate qw(validate CODEREF);
 use Carp qw(croak);
+use POSIX qw(_exit);
 
 our $TIMEOUT_EXIT_CODE = 29;
 
@@ -75,7 +76,7 @@ sub _fork_child {
 
     # setup a (safe) signal handler for USR1 which will exit early
     # from sleep()
-    local $SIG{USR1} = sub { exit(0) };
+    local $SIG{USR1} = sub { _exit(0) };
 
     # now running in the child, sleep for $timeout seconds
     sleep $timeout;
@@ -87,8 +88,10 @@ sub _fork_child {
     # woke up, time to kill parent's thread
     $pkg->_kill_connection($dbh);
 
-    # tell the parent what happened
-    exit($TIMEOUT_EXIT_CODE);
+    # tell the parent what happened (use POSIX::_exit() to make sure
+    # the parent really gets the message - otherwise END blocks can
+    # change the exit code)
+    _exit($TIMEOUT_EXIT_CODE);
 }
 
 
@@ -144,8 +147,8 @@ is that it relies on unsafe signals to work.  Unsafe signals are well
 known to cause instability.  To understand why, imagine the DB client
 code is in the middle of updating some global state when the signal
 arrives.  That global state could be left in an inconsitent state,
-just wait for the next time it is needed to cause problems.  Since
-this will likely occur far from the cause, and only ocur rarely, it
+just waiting for the next time it is needed to cause problems.  Since
+this will likely occur far from the cause, and only occur rarely, it
 can be a very difficult problem to track down.
 
 Instead, this module:
@@ -200,11 +203,15 @@ returns.
 
 =head1 KNOWN ISSUES
 
-When the timeout fires a warning may occur.  I haven't been able to
-figure out where this warning is coming from, but it's not affected by
-the Warn or PrintWarn attributes.  Here's what it looks like:
+When the timeout fires a warning may occur that looks like:
 
     DBD::mysql::db selectcol_arrayref failed: Unknown error at ...
+
+You can silence this warning by turning off PrintError:
+
+    $dbh->{PrintError} = 0;
+
+I prefer RaiseError in any case.
 
 =head1 BUGS
 
@@ -223,6 +230,10 @@ This module is supported on the dbi-users mailing list.  Details here:
 You can find the public Subversion repository here:
 
   https://dbix-timeout.googlecode.com/svn/trunk
+
+=head1 CREDITS
+
+The mechanism used by this module was suggested by Perrin Harkins.
 
 =head1 AUTHOR
 
